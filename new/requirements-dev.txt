@@ -5,4 +5,3 @@ pytest-mock
 pytest-aiohttp
 asynctest
 aioresponses
-git-bump-version
