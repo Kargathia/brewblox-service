@@ -62,9 +62,9 @@ async def app(app, mocker, loop, mocked_connect):
 
 
 async def test_setup(app, client):
-    assert events.EVENTBUS_HOST == 'eventbus'
     assert events.get_listener(app)
     assert events.get_publisher(app)
+    assert events.get_handler(app)
 
 
 async def test_subscribe_callbacks(app, client, mocker):
@@ -218,6 +218,8 @@ async def test_listener_exceptions(app, client, protocol_mock, channel_mock, tra
 
     # Should be closed every time it was opened
     await listener.shutdown(app)
+    await events.get_handler(app).shutdown(app)
+    await events.get_publisher(app).shutdown(app)
     assert protocol_mock.close.call_count == mocked_connect.call_count
     assert transport_mock.close.call_count == mocked_connect.call_count
 
@@ -240,3 +242,18 @@ async def test_publisher_exceptions(app, client, protocol_mock):
 
     with pytest.raises(aioamqp.AmqpClosedConnection):
         await events.get_publisher(app).publish('exchange', 'routing', 'message')
+
+
+async def test_handler(app, client, mocker):
+    emit_spy = mocker.spy(events.get_handler(app), 'emit')
+    publish_spy = mocker.spy(events.get_publisher(app), 'publish')
+
+    events.LOGGER.debug('Expecting the Spanish Inquisition')
+    assert emit_spy.call_count == 0
+
+    events.LOGGER.info('info')
+    events.LOGGER.warn('warn')
+    assert emit_spy.call_count == 2
+
+    await asyncio.sleep(0.01)
+    assert publish_spy.call_count == 2

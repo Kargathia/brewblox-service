@@ -7,7 +7,6 @@ Any fixtures declared here are available to all test functions in this directory
 import logging
 
 import pytest
-
 from brewblox_service import service
 
 
@@ -26,6 +25,7 @@ def app_config() -> dict:
         'port': 1234,
         'debug': False,
         'output': None,
+        'eventbus': 'eventbus'
     }
 
 
@@ -36,6 +36,7 @@ def sys_args(app_config) -> list:
         '--name', app_config['name'],
         '--host', app_config['host'],
         '--port', str(app_config['port']),
+        '--eventbus', app_config['eventbus'],
     ]
 
 

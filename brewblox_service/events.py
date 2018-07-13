@@ -23,9 +23,10 @@ Example use:
 
 import asyncio
 import json
+import logging
 from concurrent.futures import CancelledError, TimeoutError
 from datetime import timedelta
-from typing import Callable, Coroutine, List, Union
+from typing import Awaitable, Callable, List, Union
 
 import aioamqp
 from aiohttp import web
@@ -34,19 +35,23 @@ from brewblox_service import brewblox_logger, features, scheduler
 LOGGER = brewblox_logger(__name__)
 routes = web.RouteTableDef()
 
-EVENT_CALLBACK_ = Callable[['EventSubscription', str, Union[dict, str]], Coroutine]
+EVENT_CALLBACK_ = Callable[['EventSubscription', str, Union[dict, str]], Awaitable]
 ExchangeType_ = str
 
-EVENTBUS_HOST = 'eventbus'
 EVENTBUS_PORT = 5672
 RECONNECT_INTERVAL = timedelta(seconds=1)
 PENDING_WAIT_TIMEOUT = timedelta(seconds=5)
+LOGGING_EXCHANGE = 'brewblox-service-logs'
 
 
 def setup(app: web.Application):
     features.add(app, EventListener(app))
     features.add(app, EventPublisher(app))
     app.router.add_routes(routes)
+
+    handler = EventLogHandler(app)
+    features.add(app, handler)
+    logging.getLogger().addHandler(handler)
 
 
 def get_listener(app: web.Application) -> 'EventListener':
@@ -57,12 +62,16 @@ def get_publisher(app: web.Application) -> 'EventPublisher':
     return features.get(app, EventPublisher)
 
 
+def get_handler(app: web.Application) -> 'EventLogHandler':
+    return features.get(app, EventLogHandler)
+
+
 ##############################################################################
 # Incoming events
 ##############################################################################
 
-async def _default_on_message(sub: 'EventSubscription', key: str, message: Union[dict, str]):
-    LOGGER.info(f'Unhandled event: subscription={sub}, key={key}, message={message}')
+async def _default_on_message(sub, key, message):
+    LOGGER.debug(f'Unhandled event: subscription={sub}, key={key}, message={message}')
 
 
 class EventSubscription():
@@ -142,13 +151,13 @@ class EventListener(features.ServiceFeature):
 
     def __init__(self,
                  app: web.Application,
-                 host: str=EVENTBUS_HOST,
-                 port: int=EVENTBUS_PORT
+                 host: str=None,
+                 port: int=None
                  ):
         super().__init__(app)
 
-        self._host: str = host
-        self._port: int = port
+        self._host: str = host or app['config']['eventbus']
+        self._port: int = port or EVENTBUS_PORT
 
         # Asyncio queues need a context loop
         # We'll initialize self._pending when we have one
@@ -327,13 +336,13 @@ class EventPublisher(features.ServiceFeature):
 
     def __init__(self,
                  app: web.Application,
-                 host: str=EVENTBUS_HOST,
-                 port: int=EVENTBUS_PORT
+                 host: str=None,
+                 port: int=None
                  ):
         super().__init__(app)
 
-        self._host: str = host
-        self._port: int = port
+        self._host: str = host or app['config']['eventbus']
+        self._port: int = port or EVENTBUS_PORT
         self._reset()
 
     @property
@@ -439,6 +448,60 @@ class EventPublisher(features.ServiceFeature):
             exchange_name=exchange,
             routing_key=routing
         )
+
+
+class EventLogHandler(features.ServiceFeature, logging.Handler):
+
+    def __init__(self, app: web.Application):
+        features.ServiceFeature.__init__(self, app)
+        logging.Handler.__init__(self, logging.INFO)
+
+        self._task: asyncio.Task = None
+        self._queue: asyncio.Queue = None
+
+    async def startup(self, app: web.Application):
+        self._queue = asyncio.Queue(loop=app.loop)
+        self._task = await scheduler.create_task(app, self._run())
+
+    async def shutdown(self, app: web.Application):
+        await scheduler.cancel_task(app, self._task)
+        self._task = None
+        self._queue = None
+
+    async def _run(self):
+        svname = self.app['config']['name']
+        publisher = get_publisher(self.app)
+        record: logging.LogRecord = None
+
+        while True:
+            try:
+                record = record or await self._queue.get()
+                await publisher.publish(
+                    exchange=LOGGING_EXCHANGE,
+                    routing='.'.join([svname, record.levelname]),
+                    message={
+                        k: getattr(record, k)
+                        for k in [
+                            'name',
+                            'levelname',
+                            'created',
+                            'message'
+                        ]
+                    }
+                )
+                record = None
+
+            except CancelledError:
+                break
+
+            except Exception as ex:
+                await asyncio.sleep(RECONNECT_INTERVAL.seconds)
+
+    def emit(self, record: logging.LogRecord):
+        try:
+            self._queue.put_nowait(record)
+        except (AttributeError, asyncio.QueueFull):
+            pass
 
 
 ##############################################################################

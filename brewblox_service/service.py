@@ -95,6 +95,9 @@ def create_parser(default_name: str) -> argparse.ArgumentParser:
     argparser.add_argument('--debug',
                            help='Run the app in debug mode. [%(default)s]',
                            action='store_true')
+    argparser.add_argument('--eventbus',
+                           help='Eventbus host name. [%(default)s]',
+                           default='eventbus')
     return argparser
 
 
@@ -133,7 +136,6 @@ def create_app(
     args = parser.parse_args(raw_args)
     _init_logging(args)
 
-    LOGGER.info(f'Creating [{args.name}] application')
     app = web.Application(debug=args.debug)
     app['config'] = vars(args)
     return app
@@ -151,6 +153,9 @@ def furnish(app: web.Application):
             The Aiohttp Application as created by `create_app()`
     """
     app_name = app['config']['name']
+    LOGGER.info(f'Creating [{app_name}] application')
+
+    # Add routing prefixes to all endpoints
     prefix = '/' + app_name.lstrip('/')
     app.router.add_routes(routes)
 
