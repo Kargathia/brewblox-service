@@ -30,6 +30,7 @@ from typing import Awaitable, Callable, List, Union
 
 import aioamqp
 from aiohttp import web
+
 from brewblox_service import brewblox_logger, features, scheduler
 
 LOGGER = brewblox_logger(__name__)
@@ -41,7 +42,7 @@ ExchangeType_ = str
 EVENTBUS_PORT = 5672
 RECONNECT_INTERVAL = timedelta(seconds=1)
 PENDING_WAIT_TIMEOUT = timedelta(seconds=5)
-LOGGING_EXCHANGE = 'brewblox-service-logs'
+LOGGING_EXCHANGE = 'logcast'
 
 
 def setup(app: web.Application):
